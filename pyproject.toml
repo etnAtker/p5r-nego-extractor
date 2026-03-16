@@ -1,0 +1,15 @@
+[project]
+name = "p5r-nego-extractor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "etnAtker", email = "adsonlies@hotmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.2",
+]
+
+[project.scripts]
+p5r-nego-extractor = "cli:main"
