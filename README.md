@@ -15,10 +15,10 @@
 
 ### 使用
 
-在本脚本运行之前，需要先使用 [Atlus-Script-Tools](https://github.com/tge-was-taken/Atlus-Script-Tools) 对TALK下的`.bf`文件进行解包
+在本脚本运行之前，需要先使用 [Atlus-Script-Tools](https://github.com/tge-was-taken/Atlus-Script-Tools) 对TALK下的`.bf`文件进行解包。然后运行本程序：
 
 ```bash
-uv run p5r-nego-extractor \
+uv run python cli.py \
   --input-dir /path/to/TALK_dir \
   --output-dir /path/to/output \
   [--scripts TALK_01JIGAKU TALK_02YOUNGMEN ...]
