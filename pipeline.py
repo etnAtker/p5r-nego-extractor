@@ -49,13 +49,15 @@ class NegotiationPipeline:
             all_rules.extend(rules)
             all_flat_rows.extend(flat_rows)
 
+        result_rows = self._build_result_rows(all_flat_rows)
         workbook_path = self.output_dir / "talk_negotiation_tables.xlsx"
         sheets = [
             ("text_index", all_text_entries, TEXT_FIELDS, TEXT_HEADERS_CN),
             ("rule_table", all_rules, RULE_FIELDS, RULE_HEADERS_CN),
             ("flat", all_flat_rows, FLAT_FIELDS, FLAT_HEADERS_CN),
         ]
-        self._write_workbook(workbook_path, sheets, all_flat_rows)
+        self._write_workbook(workbook_path, sheets, result_rows)
+        self._write_result_text(self.output_dir / "talk_negotiation_summary.txt", result_rows)
 
     def _build_flat_rows(self, msg_index: MsgIndex, rules: Iterable[ReactionRule]) -> List[FlatRow]:
         rows: List[FlatRow] = []
@@ -99,7 +101,7 @@ class NegotiationPipeline:
         self,
         path: Path,
         sheets: List[Tuple[str, Iterable, List[str], List[str]]],
-        flat_rows: Iterable[FlatRow],
+        result_rows: List[Tuple[dict, List[dict]]],
     ) -> None:
         wb = Workbook()
         # remove default sheet by reusing for first data set
@@ -113,11 +115,11 @@ class NegotiationPipeline:
                 row_dict = asdict(row)
                 ws.append([row_dict.get(field, "") for field in fieldnames])
 
-        self._add_result_sheet(wb, flat_rows)
+        self._add_result_sheet(wb, result_rows)
         wb.save(path)
         LOGGER.info("Wrote %s", path)
 
-    def _add_result_sheet(self, wb: Workbook, flat_rows: Iterable[FlatRow]) -> None:
+    def _add_result_sheet(self, wb: Workbook, result_rows: List[Tuple[dict, List[dict]]]) -> None:
         ws = wb.create_sheet(index=0, title="result")
         ws.append(RESULT_HEADERS)
         header_fill = PatternFill("solid", fgColor="DDDDDD")
@@ -128,7 +130,6 @@ class NegotiationPipeline:
             cell.fill = header_fill
 
         ws.freeze_panes = "A2"
-        result_rows = self._build_result_rows(flat_rows)
         current_row = 2
 
         script_ranges: List[Tuple[int, int]] = []
@@ -262,6 +263,34 @@ class NegotiationPipeline:
                 result_data.append((question["meta"], option_rows))
 
         return result_data
+
+    def _write_result_text(self, path: Path, result_rows: List[Tuple[dict, List[dict]]]) -> None:
+        def _fmt(text: Optional[str]) -> str:
+            return text.replace("\n", " ").strip() if text else ""
+
+        with path.open("w", encoding="utf-8") as handle:
+            first = True
+            for meta, options in result_rows:
+                if not options:
+                    continue
+
+                if not first:
+                    handle.write("\n------\n\n")
+                first = False
+
+                question_label = _fmt(meta["text"])
+                handle.write(f"{question_label}\n")
+
+                for option in options:
+                    choice_label = _fmt(option["choice_text"])
+                    like = option["喜欢"] or ""
+                    normal = option["一般"] or ""
+                    dislike = option["反感"] or ""
+                    handle.write(
+                        f"> {choice_label} >> [{like}] - 喜欢 / [{normal}] - 一般 / [{dislike}] - 讨厌\n"
+                    )
+
+        LOGGER.info("Wrote %s", path)
 
     @staticmethod
     def _new_option_entry() -> dict:
