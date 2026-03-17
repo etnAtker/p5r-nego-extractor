@@ -148,9 +148,10 @@ class NegotiationPipeline:
                         meta["script"] if idx == 0 else "",
                         meta["text"] if idx == 0 else "",
                         option["choice_text"],
-                        option["喜欢"],
-                        option["一般"],
-                        option["反感"],
+                        option["开朗"],
+                        option["懦弱"],
+                        option["性急"],
+                        option["阴沉"],
                     ]
                 )
 
@@ -182,7 +183,7 @@ class NegotiationPipeline:
         question_starts = {start for start, _ in question_ranges}
         script_starts = {start for start, _ in script_ranges}
 
-        for row in ws.iter_rows(min_row=1, max_row=current_row - 1, min_col=1, max_col=6):
+        for row in ws.iter_rows(min_row=1, max_row=current_row - 1, min_col=1, max_col=7):
             for cell in row:
                 row_idx = cell.row
                 if cell.column == 1:
@@ -205,7 +206,7 @@ class NegotiationPipeline:
 
                 cell.border = Border(left=thin, right=thin, top=top, bottom=bottom)
 
-        col_widths = {1: 15, 2: 115, 3: 18, 4: 18, 5: 18, 6: 18}
+        col_widths = {1: 15, 2: 115, 3: 18, 4: 10, 5: 10, 6: 10, 7: 10}
         for idx, width in col_widths.items():
             ws.column_dimensions[get_column_letter(idx)].width = width
 
@@ -236,11 +237,11 @@ class NegotiationPipeline:
             if not option_entry["choice_text"]:
                 option_entry["choice_text"] = row.choice_text_clean or row.choice_text_raw or ""
 
-            grade_label = row.reaction_grade_label or ""
             personality_label = row.personality_label or ""
+            reaction_grade_label = row.reaction_grade_label or ""
 
-            if grade_label in option_entry and personality_label:
-                option_entry[grade_label].add(personality_label)
+            if personality_label in option_entry and reaction_grade_label in REACTION_SYMBOLS:
+                option_entry[personality_label] = REACTION_SYMBOLS[reaction_grade_label]
 
         result_data: List[Tuple[dict, List[dict]]] = []
 
@@ -253,9 +254,13 @@ class NegotiationPipeline:
                 option_rows.append(
                     {
                         "choice_text": entry["choice_text"],
-                        "喜欢": self._format_personalities(entry["喜欢"]),
-                        "反感": self._format_personalities(entry["反感"]),
-                        "一般": self._format_personalities(entry["一般"]),
+                        "开朗": entry["开朗"],
+                        "懦弱": entry["懦弱"],
+                        "性急": entry["性急"],
+                        "阴沉": entry["阴沉"],
+                        "喜欢": self._format_personalities_by_symbol(entry, "√"),
+                        "一般": self._format_personalities_by_symbol(entry, "-"),
+                        "反感": self._format_personalities_by_symbol(entry, "X"),
                     }
                 )
 
@@ -296,17 +301,16 @@ class NegotiationPipeline:
     def _new_option_entry() -> dict:
         return {
             "choice_text": "",
-            "喜欢": set(),
-            "反感": set(),
-            "一般": set(),
+            "开朗": "",
+            "懦弱": "",
+            "性急": "",
+            "阴沉": "",
         }
 
     @staticmethod
-    def _format_personalities(labels: Iterable[str]) -> str:
-        ordered = [label for label in PERSONALITY_ORDER if label in labels]
-        leftovers = sorted(set(labels) - set(ordered))
-        combined = ordered + leftovers
-        return "、".join(combined)
+    def _format_personalities_by_symbol(option_entry: dict, symbol: str) -> str:
+        labels = [label for label in PERSONALITY_ORDER if option_entry.get(label) == symbol]
+        return "、".join(labels)
 
     def _resolve_files(self, script: str) -> "ScriptFiles":
         msg_path = self.input_dir / f"{script}.BF.msg"
@@ -427,9 +431,10 @@ FLAT_HEADERS_CN = [
     "反应文本",
 ]
 
-RESULT_HEADERS = ["脚本", "题目", "选项", "喜欢", "一般", "反感"]
+RESULT_HEADERS = ["脚本", "题目", "选项", "开朗", "懦弱", "性急", "阴沉"]
 RESULT_OPTION_COUNT = 4
 PERSONALITY_ORDER = ["开朗", "懦弱", "性急", "阴沉"]
+REACTION_SYMBOLS = {"喜欢": "√", "一般": "-", "反感": "X"}
 
 
 @dataclass

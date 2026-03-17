@@ -15,9 +15,9 @@ LOGGER = logging.getLogger(__name__)
 QUESTION_RE = re.compile(r"CHAT_(FQ|SQ)_(\d+)", re.IGNORECASE)
 
 PERSONALITY_LABELS = {
-    0: "开朗",
-    1: "懦弱",
-    2: "性急",
+    0: "懦弱",
+    1: "性急",
+    2: "开朗",
     3: "阴沉",
 }
 
