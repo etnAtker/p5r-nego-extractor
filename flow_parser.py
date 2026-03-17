@@ -23,8 +23,8 @@ PERSONALITY_LABELS = {
 
 REACTION_GRADE_LABELS = {
     1: "喜欢",
-    2: "一般",
-    3: "反感",
+    2: "反感",
+    3: "一般",
 }
 
 @dataclass
