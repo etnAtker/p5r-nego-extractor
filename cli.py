@@ -22,7 +22,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=Path("output"),
-        help="Directory where CSV files will be written.",
+        help="Directory where generated files will be written.",
+    )
+    parser.add_argument(
+        "--patch-output",
+        type=Path,
+        default=None,
+        help="Optional directory where compile-ready TALK_*.BF msg/flow/header bundles will be written.",
     )
     parser.add_argument(
         "--scripts",
@@ -48,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         input_dir=args.input_dir.expanduser(),
         output_dir=args.output_dir.expanduser(),
         scripts=args.scripts,
+        patch_output_dir=args.patch_output.expanduser() if args.patch_output else None,
     )
     pipeline.run()
 

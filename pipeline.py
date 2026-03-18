@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
@@ -14,16 +15,23 @@ from openpyxl.utils import get_column_letter
 
 from flow_parser import FlowParser
 from models import FlatRow, MsgIndex, ReactionRule, TextEntry
-from msg_parser import parse_msg_resources
+from msg_parser import MESSAGE_BLOCK_RE, parse_msg_resources
 
 LOGGER = logging.getLogger(__name__)
 
 
 class NegotiationPipeline:
-    def __init__(self, input_dir: Path, output_dir: Path, scripts: Optional[Sequence[str]] = None):
+    def __init__(
+        self,
+        input_dir: Path,
+        output_dir: Path,
+        scripts: Optional[Sequence[str]] = None,
+        patch_output_dir: Optional[Path] = None,
+    ):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.scripts = list(scripts) if scripts else self._discover_scripts()
+        self.patch_output_dir = patch_output_dir
 
     def _discover_scripts(self) -> List[str]:
         scripts = []
@@ -33,6 +41,9 @@ class NegotiationPipeline:
 
     def run(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        if self.patch_output_dir:
+            self.patch_output_dir.mkdir(parents=True, exist_ok=True)
+
         all_text_entries: List[TextEntry] = []
         all_rules: List[ReactionRule] = []
         all_flat_rows: List[FlatRow] = []
@@ -44,6 +55,9 @@ class NegotiationPipeline:
             flow_parser = FlowParser(script, files.flow_path, msg_index)
             rules = flow_parser.extract_rules()
             flat_rows = self._build_flat_rows(msg_index, rules)
+
+            if self.patch_output_dir:
+                self._write_compile_bundle(files, msg_index, rules)
 
             all_text_entries.extend(msg_index.entries)
             all_rules.extend(rules)
@@ -118,6 +132,32 @@ class NegotiationPipeline:
         self._add_result_sheet(wb, result_rows)
         wb.save(path)
         LOGGER.info("Wrote %s", path)
+
+    def _write_compile_bundle(
+        self, files: "ScriptFiles", msg_index: MsgIndex, rules: Iterable[ReactionRule]
+    ) -> None:
+        if self.patch_output_dir is None:
+            return
+
+        hint_map = self._build_selection_hint_map(msg_index, rules)
+        patched_msg = self._build_patched_msg_content(
+            files.msg_path.read_text(encoding="utf-8", errors="ignore"),
+            hint_map,
+        )
+        sanitized_msg = self._sanitize_msg_file_for_compile(patched_msg)
+
+        output_msg = self.patch_output_dir / files.msg_path.name
+        output_header = self.patch_output_dir / files.header_path.name
+        output_flow = self.patch_output_dir / files.flow_path.name
+        stale_minimal_patch = self.patch_output_dir / f"{files.msg_path.name.replace('.BF.msg', '')}.msg"
+
+        if stale_minimal_patch.exists():
+            stale_minimal_patch.unlink()
+
+        output_msg.write_text(sanitized_msg, encoding="utf-8")
+        output_header.write_text(files.header_path.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+        output_flow.write_text(files.flow_path.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+        LOGGER.info("Wrote compile bundle for %s to %s", files.msg_path.stem, self.patch_output_dir)
 
     def _add_result_sheet(self, wb: Workbook, result_rows: List[Tuple[dict, List[dict]]]) -> None:
         ws = wb.create_sheet(index=0, title="result")
@@ -297,6 +337,177 @@ class NegotiationPipeline:
 
         LOGGER.info("Wrote %s", path)
 
+    def _build_selection_hint_map(
+        self, msg_index: MsgIndex, rules: Iterable[ReactionRule]
+    ) -> Dict[str, Dict[int, str]]:
+        selection_data: "OrderedDict[str, Dict[int, Dict[str, str]]]" = OrderedDict()
+
+        for selection_id, choice_count in sorted(msg_index.selection_choice_counts.items()):
+            selection_key = msg_index.id_to_key.get(selection_id)
+            if not selection_key:
+                continue
+            selection_data[selection_key] = {
+                choice_index: {label: "" for label in PERSONALITY_ORDER}
+                for choice_index in range(1, choice_count + 1)
+            }
+
+        for rule in rules:
+            selection_key = rule.selection_msg_key or msg_index.id_to_key.get(rule.selection_msg_id)
+            if not selection_key:
+                continue
+
+            choice_entry = selection_data.setdefault(selection_key, {})
+            personalities = choice_entry.setdefault(
+                rule.choice_index,
+                {label: "" for label in PERSONALITY_ORDER},
+            )
+
+            if rule.personality_label in personalities and rule.reaction_grade_label in REACTION_SYMBOLS:
+                personalities[rule.personality_label] = REACTION_SYMBOLS[rule.reaction_grade_label]
+
+        hint_map: Dict[str, Dict[int, str]] = {}
+        for selection_key, choices in selection_data.items():
+            hint_map[selection_key] = {}
+            for choice_index, personalities in choices.items():
+                likes = "".join(
+                    PERSONALITY_ABBREVIATIONS[label]
+                    for label in PERSONALITY_ORDER
+                    if personalities.get(label) == REACTION_SYMBOLS["喜欢"]
+                )
+                normals = "".join(
+                    PERSONALITY_ABBREVIATIONS[label]
+                    for label in PERSONALITY_ORDER
+                    if personalities.get(label) == REACTION_SYMBOLS["一般"]
+                )
+                dislikes = "".join(
+                    PERSONALITY_ABBREVIATIONS[label]
+                    for label in PERSONALITY_ORDER
+                    if personalities.get(label) == REACTION_SYMBOLS["反感"]
+                )
+                segments: List[str] = []
+                if likes:
+                    segments.append(f"[clr {RESULT_HINT_COLORS['喜欢']}]{likes}")
+                if normals:
+                    segments.append(f"[clr {RESULT_HINT_COLORS['一般']}]{normals}")
+                if dislikes:
+                    segments.append(f"[clr {RESULT_HINT_COLORS['反感']}]{dislikes}")
+
+                if segments:
+                    hint_map[selection_key][choice_index] = f"({''.join(segments)}[clr {RESULT_HINT_RESET_COLOR}])"
+                else:
+                    hint_map[selection_key][choice_index] = ""
+
+        return hint_map
+
+    def _build_patched_msg_content(self, content: str, hint_map: Dict[str, Dict[int, str]]) -> str:
+        lines = content.splitlines(keepends=True)
+        output_lines: List[str] = []
+        current_header: Optional[str] = None
+        current_type: Optional[str] = None
+        current_key: Optional[str] = None
+        buffer: List[str] = []
+
+        def _flush_block() -> None:
+            nonlocal current_header, current_type, current_key, buffer
+            if current_header is None:
+                return
+
+            block_text = "".join(buffer)
+            if current_type == "sel" and current_key in hint_map:
+                block_text = self._patch_selection_block(block_text, hint_map[current_key])
+
+            output_lines.append(current_header)
+            output_lines.append(block_text)
+
+            current_header = None
+            current_type = None
+            current_key = None
+            buffer = []
+
+        for line in lines:
+            match = MESSAGE_BLOCK_RE.match(line)
+            if match:
+                _flush_block()
+                current_header = line
+                current_type = match.group(1)
+                current_key = match.group(2)
+                buffer = []
+            else:
+                buffer.append(line)
+
+        _flush_block()
+        return "".join(output_lines)
+
+    @staticmethod
+    def _patch_selection_block(block_text: str, choice_hints: Dict[int, str]) -> str:
+        choice_counter = 0
+
+        def _replace(match) -> str:
+            nonlocal choice_counter
+            choice_counter += 1
+            hint = choice_hints.get(choice_counter)
+            if not hint:
+                return match.group(0)
+
+            option_prefix = match.group(1)
+            option_body = match.group(2)
+            option_end = match.group(3)
+            trimmed_body = option_body.rstrip()
+            trailing = option_body[len(trimmed_body) :]
+            return f"{option_prefix}{trimmed_body}{hint}{trailing}{option_end}"
+
+        return SELECTION_OPTION_RE.sub(_replace, block_text)
+
+    @staticmethod
+    def _sanitize_msg_text_for_compile(content: str) -> str:
+        parts = TAG_OR_ESCAPED_BRACKET_RE.split(content)
+        sanitized: List[str] = []
+
+        for part in parts:
+            if not part:
+                continue
+
+            if TAG_OR_ESCAPED_BRACKET_RE.fullmatch(part):
+                sanitized.append(part)
+                continue
+
+            for ch in part:
+                sanitized.append(_normalize_ascii_for_p5r_chs(ch))
+
+        return "".join(sanitized)
+
+    def _sanitize_msg_file_for_compile(self, content: str) -> str:
+        sanitized_lines: List[str] = []
+        for line in content.splitlines(keepends=True):
+            if line.endswith("\r\n"):
+                line_ending = "\r\n"
+                line_body = line[:-2]
+            elif line.endswith("\n"):
+                line_ending = "\n"
+                line_body = line[:-1]
+            else:
+                line_ending = ""
+                line_body = line
+
+            match = MESSAGE_BLOCK_RE.match(line_body)
+            if match:
+                sanitized_lines.append(self._sanitize_header_line(line_body) + line_ending)
+            else:
+                sanitized_lines.append(self._sanitize_msg_text_for_compile(line_body) + line_ending)
+
+        return "".join(sanitized_lines)
+
+    def _sanitize_header_line(self, line: str) -> str:
+        speaker_match = MESSAGE_SPEAKER_HEADER_RE.match(line)
+        if not speaker_match:
+            return line
+
+        prefix = speaker_match.group(1)
+        speaker = speaker_match.group(2)
+        suffix = speaker_match.group(3)
+        sanitized_speaker = self._sanitize_msg_text_for_compile(speaker)
+        return f"{prefix}{sanitized_speaker}{suffix}"
+
     @staticmethod
     def _new_option_entry() -> dict:
         return {
@@ -434,7 +645,24 @@ FLAT_HEADERS_CN = [
 RESULT_HEADERS = ["脚本", "题目", "选项", "开朗", "懦弱", "性急", "阴沉"]
 RESULT_OPTION_COUNT = 4
 PERSONALITY_ORDER = ["开朗", "懦弱", "性急", "阴沉"]
+PERSONALITY_ABBREVIATIONS = {"开朗": "开", "懦弱": "懦", "性急": "急", "阴沉": "阴"}
 REACTION_SYMBOLS = {"喜欢": "√", "一般": "-", "反感": "X"}
+RESULT_HINT_COLORS = {"喜欢": 4, "一般": 26, "反感": 10}
+RESULT_HINT_RESET_COLOR = 27
+SELECTION_OPTION_RE = re.compile(r"(\[s[^\]]*\])(.*?)(\[e\])", flags=re.DOTALL | re.IGNORECASE)
+TAG_OR_ESCAPED_BRACKET_RE = re.compile(r"(\\\[|\\\]|\[[^\]]+\])")
+MESSAGE_SPEAKER_HEADER_RE = re.compile(r"^(\[msg\s+[^\]\s]+\s+\[)(.*?)(\]\])$")
+
+
+def _normalize_ascii_for_p5r_chs(ch: str) -> str:
+    if ch == " ":
+        return ""
+
+    code = ord(ch)
+    if 0x21 <= code <= 0x7E:
+        return chr(code + 0xFEE0)
+
+    return ch
 
 
 @dataclass

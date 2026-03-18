@@ -51,10 +51,41 @@ uv run python extract_hold_up_gfs.py \
 uv run python cli.py \
   --input-dir /path/to/TALK_dir \
   --output-dir /path/to/output \
+  [--patch-output /path/to/patched_msg] \
   [--scripts TALK_01JIGAKU TALK_02YOUNGMEN ...]
 ```
 
 省略 `--scripts` 时会自动处理 `input-dir` 下全部 `TALK_*.BF.msg`。运行结束后在 `output/talk_negotiation_tables.xlsx` 中查看。
+
+如指定 `--patch-output`，程序会 patch `TALK_xxx.BF.msg` ，在原始消息基础上追加选项提示，并对不兼容 `P5R_CHS` 的文本字符做编译前清洗（此举措为对 Atlus-Script-Tools 已知 [bug](https://github.com/tge-was-taken/Atlus-Script-Tools/issues/105) 的 workaround），最后输出一整套文件到指定的目录。
+
+选项提示格式为：
+
+```text
+([clr 4]开懦[clr 26]阴[clr 10]急[clr 27])
+```
+
+其中：
+
+- `[clr 4]` 表示喜欢（绿色）
+- `[clr 26]` 表示一般（黄色）
+- `[clr 10]` 表示讨厌（红色）
+- `[clr 27]` 用于恢复默认颜色（白色）
+- 开、懦、阴、急均为简称，代表开朗、懦弱、阴沉、性急
+
+效果如图所示：
+
+![效果图](assets/nego.png)
+
+### 编译与部署
+
+`--patch-output` 生成的是可直接交给 `AtlusScriptCompiler` 的文件。当前项目验证可用的编译参数为：
+
+- `Library = P5R`
+- `Encoding = P5R_CHS`
+- `OutFormat = V3BE`
+
+使用Reload-II加载即可。
 
 ### 开发提示
 
