@@ -85,7 +85,7 @@ uv run python cli.py \
 - `Encoding = P5R_CHS`
 - `OutFormat = V3BE`
 
-使用Reload-II加载即可。
+将编译后的 `.bf` 文件使用 Reload-II 加载即可。另，本项目也提供了直接可用的mod包(`.7z`)，在 [Release](https://github.com/etnAtker/p5r-nego-extractor/releases/latest) 中下载后拖入 Reloaded-II 的窗口即可使用。
 
 ### 开发提示
 
